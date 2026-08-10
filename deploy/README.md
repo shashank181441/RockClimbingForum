@@ -14,14 +14,19 @@ nano .env.production   # paste real NEXT_PUBLIC_SUPABASE_* values
 docker compose --env-file .env.production up -d --build
 ```
 
-## 2. nginx
+## 2. nginx + TLS
+
+If certbot already issued the cert but failed to install it, copy the full HTTPS config and reload:
 
 ```bash
 sudo cp deploy/nginx/rock.vendingao.com.conf /etc/nginx/sites-available/rock.vendingao.com
 sudo ln -sf /etc/nginx/sites-available/rock.vendingao.com /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
+```
 
-# TLS
+First-time TLS (only if certs do not exist yet):
+
+```bash
 sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d rock.vendingao.com
 ```

@@ -56,7 +56,14 @@ export default function ProfilePage() {
         .from('user_badges')
         .select('badges:badges(id, name, description, icon_url, color)')
         .eq('user_id', prof.id);
-      setBadges((badgeData ?? []).map((ub: { badges: Badge }) => ub.badges).filter(Boolean) as Badge[]);
+      setBadges(
+        (badgeData ?? [])
+          .map((ub) => {
+            const raw = (ub as { badges: Badge | Badge[] | null }).badges;
+            return Array.isArray(raw) ? raw[0] : raw;
+          })
+          .filter((b): b is Badge => !!b)
+      );
 
       const { data: discs } = await supabase
         .from('discussions')

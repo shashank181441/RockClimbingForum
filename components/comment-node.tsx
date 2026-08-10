@@ -83,7 +83,7 @@ export function CommentNode({
       toast.error('Failed to post reply.');
     } else {
       // Update parent reply_count
-      await supabase.rpc('increment_reply_count', { comment_id: comment.id }).catch(() => {});
+      await supabase.rpc('increment_reply_count', { comment_id: comment.id });
       // Update discussion last_activity_at
       await supabase
         .from('discussions')
