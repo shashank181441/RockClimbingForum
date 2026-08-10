@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 42 32% 96%;
+    --foreground: 30 20% 14%;
+    --card: 42 34% 98%;
+    --card-foreground: 30 20% 14%;
+    --popover: 42 34% 98%;
+    --popover-foreground: 30 20% 14%;
+    --primary: 168 45% 28%;
+    --primary-foreground: 42 34% 98%;
+    --secondary: 42 18% 84%;
+    --secondary-foreground: 30 20% 20%;
+    --muted: 42 16% 89%;
+    --muted-foreground: 30 12% 42%;
+    --accent: 28 80% 52%;
+    --accent-foreground: 30 20% 12%;
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 42 34% 98%;
+    --border: 42 16% 79%;
+    --input: 42 16% 84%;
+    --ring: 168 45% 28%;
+    --chart-1: 168 45% 28%;
+    --chart-2: 28 80% 52%;
+    --chart-3: 200 40% 45%;
+    --chart-4: 42 65% 50%;
+    --chart-5: 30 15% 50%;
+    --radius: 0.625rem;
+    --stone: 42 16% 50%;
+    --moss: 168 45% 28%;
+    --rust: 28 80% 52%;
+    --saffron: 38 85% 52%;
+  }
+  .dark {
+    --background: 30 12% 8%;
+    --foreground: 42 24% 92%;
+    --card: 30 12% 11%;
+    --card-foreground: 42 24% 92%;
+    --popover: 30 12% 11%;
+    --popover-foreground: 42 24% 92%;
+    --primary: 168 38% 42%;
+    --primary-foreground: 30 12% 8%;
+    --secondary: 30 10% 19%;
+    --secondary-foreground: 42 24% 90%;
+    --muted: 30 10% 17%;
+    --muted-foreground: 42 12% 60%;
+    --accent: 28 72% 56%;
+    --accent-foreground: 30 12% 8%;
+    --destructive: 0 62% 45%;
+    --destructive-foreground: 42 24% 95%;
+    --border: 30 10% 21%;
+    --input: 30 10% 21%;
+    --ring: 168 38% 42%;
+    --chart-1: 168 38% 42%;
+    --chart-2: 28 72% 56%;
+    --chart-3: 200 40% 50%;
+    --chart-4: 42 55% 55%;
+    --chart-5: 42 10% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .prose-climbing {
+    line-height: 1.7;
+  }
+  .prose-climbing p {
+    margin-bottom: 1em;
+  }
+  .prose-climbing h1,
+  .prose-climbing h2,
+  .prose-climbing h3 {
+    font-weight: 700;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+  }
+  .prose-climbing ul,
+  .prose-climbing ol {
+    padding-left: 1.5em;
+    margin-bottom: 1em;
+  }
+  .prose-climbing li {
+    margin-bottom: 0.25em;
+  }
+  .prose-climbing a {
+    color: hsl(var(--primary));
+    text-decoration: underline;
+  }
+  .prose-climbing blockquote {
+    border-left: 3px solid hsl(var(--border));
+    padding-left: 1em;
+    color: hsl(var(--muted-foreground));
+    margin: 1em 0;
+  }
+  .prose-climbing code {
+    background: hsl(var(--muted));
+    padding: 0.15em 0.3em;
+    border-radius: 0.25em;
+    font-size: 0.9em;
+  }
+  .prose-climbing pre {
+    background: hsl(var(--muted));
+    padding: 1em;
+    border-radius: 0.5em;
+    overflow-x: auto;
+    margin: 1em 0;
+  }
+  .prose-climbing img {
+    border-radius: 0.5em;
+    max-width: 100%;
+    margin: 1em 0;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground));
+}
