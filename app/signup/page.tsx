@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Mountain, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
+import { getAuthCallbackUrl } from '@/lib/site-url';
 
 export default function SignupPage() {
   const router = useRouter();
@@ -35,18 +36,31 @@ export default function SignupPage() {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { username } },
+      options: {
+        data: { username },
+        emailRedirectTo: getAuthCallbackUrl(),
+      },
     });
     if (error) {
       toast.error(error.message);
       setSubmitting(false);
-    } else if (data.user) {
+      return;
+    }
+
+    if (data.session) {
       toast.success('Account created! Welcome to Nepal Climbs.');
       router.push('/');
-    } else {
-      toast.error('Something went wrong. Please try again.');
-      setSubmitting(false);
+      return;
     }
+
+    if (data.user) {
+      toast.success('Check your email to confirm your account.');
+      router.push('/login');
+      return;
+    }
+
+    toast.error('Something went wrong. Please try again.');
+    setSubmitting(false);
   }
 
   return (

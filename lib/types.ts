@@ -138,7 +138,7 @@ export interface Attachment {
 export interface Like {
   id: string;
   user_id: string;
-  reaction_type_id: string;
+  reaction_type_id: string | number | null;
   likeable_type: LikeableType;
   likeable_id: string;
   created_at: string;
