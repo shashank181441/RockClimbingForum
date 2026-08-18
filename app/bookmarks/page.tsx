@@ -69,7 +69,7 @@ export default function BookmarksPage() {
       setDiscussions(formatted);
     }
     setLoading(false);
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push('/login');

@@ -10,9 +10,11 @@ export function SiteFooter() {
             <Mountain className="h-5 w-5 text-primary" />
             Nepal Climbs
           </div>
-          <nav className="flex items-center gap-4 text-sm text-muted-foreground">
+          <nav className="flex flex-wrap items-center justify-center gap-4 text-sm text-muted-foreground">
             <Link href="/" className="hover:text-foreground">Home</Link>
             <Link href="/categories" className="hover:text-foreground">Categories</Link>
+            <Link href="/faq" className="hover:text-foreground">FAQ</Link>
+            <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
             <span className="opacity-50">Climb safe. Namaste.</span>
           </nav>
         </div>

@@ -6,17 +6,33 @@ import { AuthProvider } from '@/lib/auth-context';
 import { SiteHeader } from '@/components/site-header';
 import { SiteFooter } from '@/components/site-footer';
 import { Toaster } from '@/components/ui/sonner';
+import { DEFAULT_DESCRIPTION, SITE_NAME, absoluteUrl } from '@/lib/seo';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-sans' });
 const outfit = Outfit({ subsets: ['latin'], variable: '--font-display' });
 
 export const metadata: Metadata = {
-  title: 'Nepal Climbs — Bouldering & Rock Climbing Forum',
-  description: 'Nepal\'s community for bouldering and rock climbing. Share beta, trip reports, crag guides, and stoke.',
-  openGraph: {
-    title: 'Nepal Climbs — Bouldering & Rock Climbing Forum',
-    description: 'Nepal\'s community for bouldering and rock climbing. Share beta, trip reports, crag guides, and stoke.',
+  metadataBase: new URL(absoluteUrl('/')),
+  title: {
+    default: `${SITE_NAME} — Bouldering & Rock Climbing Forum`,
+    template: `%s | ${SITE_NAME}`,
   },
+  description: DEFAULT_DESCRIPTION,
+  applicationName: SITE_NAME,
+  openGraph: {
+    title: `${SITE_NAME} — Bouldering & Rock Climbing Forum`,
+    description: DEFAULT_DESCRIPTION,
+    url: absoluteUrl('/'),
+    siteName: SITE_NAME,
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary',
+    title: `${SITE_NAME} — Bouldering & Rock Climbing Forum`,
+    description: DEFAULT_DESCRIPTION,
+  },
+  robots: { index: true, follow: true },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

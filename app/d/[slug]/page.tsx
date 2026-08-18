@@ -36,8 +36,21 @@ export default function DiscussionPage() {
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [likedCommentIds, setLikedCommentIds] = useState<Set<string>>(new Set());
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadComments = useCallback(async (discId: string) => {
+    const { data: comms } = await supabase
+      .from('comments')
+      .select(`
+        *,
+        profiles:profiles!comments_user_id_fkey(id, username, display_name, avatar_url)
+      `)
+      .eq('discussion_id', discId)
+      .neq('status', 'deleted')
+      .order('created_at', { ascending: true });
+    setComments((comms ?? []) as CommentWithProfile[]);
+  }, []);
+
+  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     const { data: disc, error: discError } = await supabase
       .from('discussions')
       .select(`
@@ -63,10 +76,12 @@ export default function DiscussionPage() {
     setDiscussion(formatted);
     setLikeCount(formatted.like_count);
 
-    // Increment view count
-    await supabase.rpc('increment_view_count', { disc_id: formatted.id }).then(({ error }: { error: unknown }) => {
-      if (error) console.warn('Failed to increment view count');
-    });
+    // Increment view count only on full (non-silent) loads
+    if (!opts?.silent) {
+      await supabase.rpc('increment_view_count', { disc_id: formatted.id }).then(({ error }: { error: unknown }) => {
+        if (error) console.warn('Failed to increment view count');
+      });
+    }
 
     // Load attachments
     const { data: atts } = await supabase
@@ -80,53 +95,51 @@ export default function DiscussionPage() {
     // Load comments
     await loadComments(formatted.id);
 
-    // Load like state
-    if (user) {
+    setLoading(false);
+  }, [slug, loadComments]);
+
+  // Load discussion once per slug (not on every auth token refresh)
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only slug
+  }, [slug]);
+
+  // When user becomes available, refresh personal like/bookmark state without full reload UI
+  useEffect(() => {
+    if (!user || !discussion) return;
+    let cancelled = false;
+    (async () => {
       const { data: likeData } = await supabase
         .from('likes')
         .select('id')
         .eq('likeable_type', 'discussion')
-        .eq('likeable_id', formatted.id)
+        .eq('likeable_id', discussion.id)
         .eq('user_id', user.id)
         .maybeSingle();
+      if (cancelled) return;
       setIsLiked(!!likeData);
 
       const { data: bookmarkData } = await supabase
         .from('bookmarks')
         .select('discussion_id')
-        .eq('discussion_id', formatted.id)
+        .eq('discussion_id', discussion.id)
         .eq('user_id', user.id)
         .maybeSingle();
+      if (cancelled) return;
       setIsBookmarked(!!bookmarkData);
 
-      // Load liked comment IDs
       const { data: commentLikes } = await supabase
         .from('likes')
         .select('likeable_id')
         .eq('likeable_type', 'comment')
         .eq('user_id', user.id);
+      if (cancelled) return;
       setLikedCommentIds(new Set((commentLikes ?? []).map((l) => l.likeable_id)));
-    }
-
-    setLoading(false);
-  }, [slug, user]);
-
-  const loadComments = useCallback(async (discId: string) => {
-    const { data: comms } = await supabase
-      .from('comments')
-      .select(`
-        *,
-        profiles:profiles!comments_user_id_fkey(id, username, display_name, avatar_url)
-      `)
-      .eq('discussion_id', discId)
-      .neq('status', 'deleted')
-      .order('created_at', { ascending: true });
-    setComments((comms ?? []) as CommentWithProfile[]);
-  }, []);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, discussion?.id]);
 
   async function submitComment() {
     if (!user) {

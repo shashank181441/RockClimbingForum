@@ -79,7 +79,7 @@ export function SiteHeader() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user]);
+  }, [user?.id]);
 
   const navLinks = [
     { href: '/', label: 'Home' },

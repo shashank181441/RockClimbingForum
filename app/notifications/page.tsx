@@ -59,7 +59,7 @@ export default function NotificationsPage() {
       setNotifications((data ?? []) as NotificationWithActor[]);
     }
     setLoading(false);
-  }, [user]);
+  }, [user?.id]);
 
   useEffect(() => {
     if (!authLoading && !user) router.push('/login');
@@ -69,7 +69,7 @@ export default function NotificationsPage() {
     loadNotifications();
   }, [loadNotifications]);
 
-  // Realtime subscription
+  // Realtime subscription — append new rows instead of full reload when possible
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -82,14 +82,28 @@ export default function NotificationsPage() {
           table: 'notifications',
           filter: `user_id=eq.${user.id}`,
         },
-        () => loadNotifications()
+        () => {
+          // Soft refresh without flipping the whole page to loading skeleton
+          void (async () => {
+            const { data } = await supabase
+              .from('notifications')
+              .select(`
+                *,
+                actor:profiles!notifications_actor_id_fkey(id, username, display_name, avatar_url)
+              `)
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+              .limit(50);
+            if (data) setNotifications(data as NotificationWithActor[]);
+          })();
+        }
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, loadNotifications]);
+  }, [user?.id]);
 
   async function markAsRead(id: string) {
     await supabase.from('notifications').update({ is_read: true }).eq('id', id);
