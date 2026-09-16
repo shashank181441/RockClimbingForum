@@ -1,0 +1,43 @@
+# Secrets (repo or environment "nepal_climbs"):
+#   SERVER_HOST      VPS hostname or IP
+#   SERVER_USER      SSH user
+#   SERVER_SSH_KEY   Private key whose public half is in authorized_keys
+# Optional repository variable:
+#   DEPLOY_PATH      Default /opt/nepal-climbs
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ci-nepal-climbs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
