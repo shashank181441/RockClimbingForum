@@ -91,7 +91,11 @@ export default function DiscussionPage() {
         }))
       );
 
-      await loadComments(disc.id);
+      try {
+        await loadComments(disc.id);
+      } catch {
+        setComments([]);
+      }
     } catch {
       setError('Discussion not found.');
     } finally {

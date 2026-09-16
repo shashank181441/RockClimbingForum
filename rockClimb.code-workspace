@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../../laravel/projects/rock_laravel"
+		},
+		{
+			"path": "../../../laravel/projects/backend_laravel_try"
+		}
+	],
+	"settings": {}
+}
