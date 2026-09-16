@@ -18,3 +18,16 @@ services:
       # Host 3001 → container 3000 (avoids clashing with other apps on :3000)
       - "127.0.0.1:3001:3000"
     restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://127.0.0.1:3000',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
+

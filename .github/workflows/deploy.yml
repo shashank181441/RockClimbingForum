@@ -1,0 +1,134 @@
+# Secrets (repo or environment "nepal_climbs_web"):
+#   SERVER_HOST         VPS hostname or IP
+#   SERVER_USER         SSH user (root)
+#   SERVER_SSH_KEY      Private key whose public half is in authorized_keys
+#   REPO_CLONE_TOKEN    Optional GitHub PAT (contents:read) for first-time HTTPS clone
+# Optional repository variables:
+#   DEPLOY_PATH         Default /opt/nepal-climbs
+#   REPO_URL            Default https://github.com/shashank181441/RockClimbingForum.git
+
+name: Deploy frontend
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-nepal-climbs-web
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build
+        env:
+          NEXT_PUBLIC_API_URL: https://rockapi.vendingao.com/api
+          NEXT_PUBLIC_SITE_URL: https://rock.vendingao.com
+        run: npm run build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH || '/opt/nepal-climbs' }}
+          REPO_URL: ${{ vars.REPO_URL || 'https://github.com/shashank181441/RockClimbingForum.git' }}
+          REPO_CLONE_TOKEN: ${{ secrets.REPO_CLONE_TOKEN }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          envs: DEPLOY_PATH,REPO_URL,REPO_CLONE_TOKEN
+          script: |
+            set -euo pipefail
+            export GIT_TERMINAL_PROMPT=0
+
+            echo "Deploy as $(whoami) → $DEPLOY_PATH"
+
+            ensure_repo() {
+              if [ -f "$DEPLOY_PATH/docker-compose.yml" ]; then
+                return 0
+              fi
+
+              echo "Repo missing at $DEPLOY_PATH (no docker-compose.yml)"
+              mkdir -p "$DEPLOY_PATH"
+              ls -la "$DEPLOY_PATH" || true
+
+              if [ -d "$DEPLOY_PATH/.git" ]; then
+                echo "Found .git without compose — fetching origin/main"
+                cd "$DEPLOY_PATH"
+                git fetch origin main
+                git checkout main
+                git reset --hard origin/main
+                return 0
+              fi
+
+              if [ -n "$(ls -A "$DEPLOY_PATH" 2>/dev/null || true)" ]; then
+                echo "ERROR: $DEPLOY_PATH is not empty and is not a valid checkout."
+                echo "On the VPS: sudo rm -rf $DEPLOY_PATH && sudo mkdir -p $DEPLOY_PATH && sudo chown \$USER:\$USER $DEPLOY_PATH"
+                exit 1
+              fi
+
+              CLONE_URL="$REPO_URL"
+              if [ -n "${REPO_CLONE_TOKEN:-}" ]; then
+                CLONE_URL="$(echo "$REPO_URL" | sed "s#https://#https://x-access-token:${REPO_CLONE_TOKEN}@#")"
+                echo "Cloning via HTTPS with REPO_CLONE_TOKEN"
+              else
+                echo "Cloning via $REPO_URL (no REPO_CLONE_TOKEN — fails if the repo is private)"
+              fi
+
+              if ! git clone --branch main "$CLONE_URL" "$DEPLOY_PATH"; then
+                echo "ERROR: git clone failed."
+                echo "Clone once on the VPS (recommended for private repos), then re-run this workflow:"
+                echo "  sudo mkdir -p $DEPLOY_PATH && sudo chown \"\$USER:\$USER\" $DEPLOY_PATH"
+                echo "  git clone git@github.com:shashank181441/RockClimbingForum.git $DEPLOY_PATH"
+                echo "Or add environment secret REPO_CLONE_TOKEN (PAT with repo read) and re-run."
+                exit 1
+              fi
+            }
+
+            ensure_repo
+            cd "$DEPLOY_PATH"
+
+            if [ ! -f docker-compose.yml ]; then
+              echo "docker-compose.yml still missing in $DEPLOY_PATH"
+              ls -la
+              exit 1
+            fi
+
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+
+            if [ ! -f .env.production ]; then
+              echo "Missing $DEPLOY_PATH/.env.production"
+              echo "On the server: cp .env.production.example .env.production && nano .env.production"
+              exit 1
+            fi
+
+            bash scripts/deploy.sh

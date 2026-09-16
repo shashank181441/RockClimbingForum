@@ -54,6 +54,39 @@ Then rebuild so signup emails use the production callback URL.
 
 ```bash
 cd /opt/nepal-climbs
-git pull   # or copy new files
-docker compose --env-file .env.production up -d --build
+git fetch origin main
+git checkout main
+git reset --hard origin/main
+bash scripts/deploy.sh
 ```
+
+## 5. GitHub Actions
+
+Workflows:
+
+- `.github/workflows/ci.yml` — typecheck and production build on PR/push to `main`
+- `.github/workflows/deploy.yml` — build, then SSH to the VPS and run `scripts/deploy.sh`
+
+Create repository secrets (environment `nepal_climbs_web` is optional):
+
+| Secret | Purpose |
+|--------|---------|
+| `SERVER_HOST` | VPS host (`163.227.192.41`) |
+| `SERVER_USER` | SSH user (`root`) |
+| `SERVER_SSH_KEY` | Deploy private key (public half in `/root/.ssh/authorized_keys`) |
+| `REPO_CLONE_TOKEN` | Optional PAT for first HTTPS clone |
+
+Optional variable: `DEPLOY_PATH` (default `/opt/nepal-climbs`).
+
+The VPS checkout must already exist (or be clonable). Private-repo HTTPS clones from Actions fail without a token — prefer an SSH clone:
+
+```bash
+sudo mkdir -p /opt/nepal-climbs
+sudo chown "$USER:$USER" /opt/nepal-climbs
+git clone git@github.com:shashank181441/RockClimbingForum.git /opt/nepal-climbs
+cd /opt/nepal-climbs
+cp .env.production.example .env.production
+nano .env.production
+bash scripts/deploy.sh
+```
+
