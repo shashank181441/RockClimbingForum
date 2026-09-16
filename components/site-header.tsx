@@ -19,7 +19,7 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { supabase } from '@/lib/supabase/client';
+import { listNotifications } from '@/lib/api/forum';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -52,32 +52,22 @@ export function SiteHeader() {
       setUnreadCount(0);
       return;
     }
+    let cancelled = false;
     const fetchUnread = async () => {
-      const { count } = await supabase
-        .from('notifications')
-        .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
-        .eq('is_read', false);
-      setUnreadCount(count ?? 0);
+      try {
+        const notifications = await listNotifications();
+        if (!cancelled) {
+          setUnreadCount(notifications.filter((n) => !n.is_read).length);
+        }
+      } catch {
+        if (!cancelled) setUnreadCount(0);
+      }
     };
     fetchUnread();
-
-    const channel = supabase
-      .channel('notifications-header')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => fetchUnread()
-      )
-      .subscribe();
-
+    const interval = setInterval(fetchUnread, 60_000);
     return () => {
-      supabase.removeChannel(channel);
+      cancelled = true;
+      clearInterval(interval);
     };
   }, [user?.id]);
 

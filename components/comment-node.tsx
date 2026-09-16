@@ -1,7 +1,13 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { useState } from 'react';
+import {
+  createComment,
+  createReport,
+  deleteComment as apiDeleteComment,
+  updateComment,
+} from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import type { CommentWithProfile } from '@/lib/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -46,6 +52,7 @@ export function CommentNode({
   onLikeToggle,
   onCommentAdded,
 }: CommentNodeProps) {
+  const { user } = useAuth();
   const [showReplyBox, setShowReplyBox] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -58,79 +65,58 @@ export function CommentNode({
 
   async function submitReply() {
     if (!replyText.trim()) return;
-    setSubmitting(true);
-    const { data: userData } = await supabase.auth.getUser();
-    if (!userData.user) {
+    if (!user) {
       toast.error('Please sign in to reply.');
-      setSubmitting(false);
       return;
     }
+    setSubmitting(true);
 
-    const parentPath = comment.path || '';
-    const newPath = parentPath ? `${parentPath}.${comment.id}` : comment.id;
-    const newDepth = (comment.depth || 0) + 1;
-
-    const { error } = await supabase.from('comments').insert({
-      discussion_id: discussionId,
-      parent_id: comment.id,
-      user_id: userData.user.id,
-      body: replyText.trim(),
-      depth: newDepth,
-      path: newPath,
-    });
-
-    if (error) {
-      toast.error('Failed to post reply.');
-    } else {
-      // Update parent reply_count
-      await supabase.rpc('increment_reply_count', { comment_id: comment.id });
-      // Update discussion last_activity_at
-      await supabase
-        .from('discussions')
-        .update({ last_activity_at: new Date().toISOString(), comment_count: (await getCommentCount(discussionId)) })
-        .eq('id', discussionId);
+    try {
+      await createComment(discussionId, replyText.trim(), comment.id);
       setReplyText('');
       setShowReplyBox(false);
       onCommentAdded();
       toast.success('Reply posted!');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to post reply.');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
-  }
-
-  async function getCommentCount(discId: string): Promise<number> {
-    const { count } = await supabase
-      .from('comments')
-      .select('*', { count: 'exact', head: true })
-      .eq('discussion_id', discId)
-      .neq('status', 'deleted');
-    return count ?? 0;
   }
 
   async function saveEdit() {
     if (!editText.trim()) return;
-    const { error } = await supabase
-      .from('comments')
-      .update({ body: editText.trim(), edited_at: new Date().toISOString() })
-      .eq('id', comment.id);
-    if (error) {
-      toast.error('Failed to edit comment.');
-    } else {
+    try {
+      await updateComment(comment.id, editText.trim());
       setEditing(false);
       onCommentAdded();
       toast.success('Comment edited.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to edit comment.');
     }
   }
 
   async function deleteComment() {
-    const { error } = await supabase
-      .from('comments')
-      .update({ status: 'deleted' })
-      .eq('id', comment.id);
-    if (error) {
-      toast.error('Failed to delete comment.');
-    } else {
+    try {
+      await apiDeleteComment(comment.id);
       onCommentAdded();
       toast.success('Comment deleted.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to delete comment.');
+    }
+  }
+
+  async function reportComment() {
+    if (!currentUserId) return;
+    try {
+      await createReport({
+        reportable_type: 'comment',
+        reportable_id: comment.id,
+        reason: 'Reported by user',
+      });
+      toast.success('Comment reported.');
+    } catch {
+      toast.error('Failed to report.');
     }
   }
 
@@ -164,13 +150,11 @@ export function CommentNode({
     );
   }
 
-  const indentDepth = Math.min(depth, MAX_INDENT_DEPTH);
   const shouldFlatten = depth >= MAX_INDENT_DEPTH;
 
   return (
     <div className={cn('animate-fade-in', depth > 0 && !shouldFlatten && 'ml-4 border-l border-border pl-4')}>
       <div className="py-3">
-        {/* Header */}
         <div className="flex items-center gap-2">
           <Avatar className="h-7 w-7">
             <AvatarImage src={comment.profiles?.avatar_url ?? undefined} alt={comment.profiles?.display_name ?? ''} />
@@ -213,20 +197,7 @@ export function CommentNode({
                   </>
                 )}
                 {!isOwner && (
-                  <DropdownMenuItem
-                    onClick={() => {
-                      supabase.from('reports').insert({
-                        reporter_id: currentUserId,
-                        reportable_type: 'comment',
-                        reportable_id: comment.id,
-                        reason: 'Reported by user',
-                      }).then(({ error }) => {
-                        if (error) toast.error('Failed to report.');
-                        else toast.success('Comment reported.');
-                      });
-                    }}
-                    className="text-destructive"
-                  >
+                  <DropdownMenuItem onClick={reportComment} className="text-destructive">
                     Report
                   </DropdownMenuItem>
                 )}
@@ -235,7 +206,6 @@ export function CommentNode({
           </div>
         </div>
 
-        {/* Body */}
         {editing ? (
           <div className="mt-2 space-y-2">
             <Textarea
@@ -255,7 +225,6 @@ export function CommentNode({
           <div className="mt-2 whitespace-pre-wrap text-sm">{comment.body}</div>
         )}
 
-        {/* Actions */}
         <div className="mt-2 flex items-center gap-2">
           <LikeButton
             likeableType="comment"
@@ -275,7 +244,6 @@ export function CommentNode({
           )}
         </div>
 
-        {/* Reply box */}
         {showReplyBox && (
           <div className="mt-3 space-y-2 animate-slide-in">
             <Textarea
@@ -296,7 +264,6 @@ export function CommentNode({
           </div>
         )}
 
-        {/* Replies */}
         {replies.length > 0 && !collapsed && (
           <div className="mt-1">
             {replies.map((reply) => {

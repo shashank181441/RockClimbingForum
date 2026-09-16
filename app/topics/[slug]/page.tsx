@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { getTopic, listDiscussions } from '@/lib/api/forum';
 import type { TopicWithCategory, TopicRule, DiscussionWithRelations } from '@/lib/types';
 import { DiscussionCard } from '@/components/discussion-card';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
@@ -26,55 +26,23 @@ export default function TopicPage() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const { data: top, error: topError } = await supabase
-        .from('topics')
-        .select('*, categories:categories!topics_category_id_fkey(name, slug)')
-        .eq('slug', slug)
-        .maybeSingle();
+      try {
+        const top = await getTopic(slug);
+        setTopic(top);
+        setRules(top.rules ?? []);
 
-      if (topError || !top) {
+        const { data: discs } = await listDiscussions({
+          topic_id: top.id,
+          per_page: 100,
+        });
+
+        setPinnedDiscussions(discs.filter((d) => d.is_pinned));
+        setDiscussions(discs.filter((d) => !d.is_pinned));
+      } catch {
         setError('Topic not found.');
+      } finally {
         setLoading(false);
-        return;
       }
-
-      setTopic(top);
-
-      // Load rules (topic-specific + site-wide)
-      const { data: r1 } = await supabase
-        .from('topic_rules')
-        .select('*')
-        .eq('topic_id', top.id)
-        .order('sort_order');
-      const { data: r2 } = await supabase
-        .from('topic_rules')
-        .select('*')
-        .is('topic_id', null)
-        .order('sort_order');
-      setRules([...(r1 ?? []), ...(r2 ?? [])]);
-
-      // Load discussions
-      const { data: discs } = await supabase
-        .from('discussions')
-        .select(`
-          *,
-          profiles:profiles!discussions_user_id_fkey(id, username, display_name, avatar_url),
-          topics:topics!discussions_topic_id_fkey(id, name, slug),
-          tags:discussion_tags(tag:tags(id, name, slug))
-        `)
-        .eq('topic_id', top.id)
-        .neq('status', 'deleted')
-        .order('is_pinned', { ascending: false })
-        .order('last_activity_at', { ascending: false });
-
-      const formatted = (discs ?? []).map((d) => ({
-        ...d,
-        tags: d.tags?.map((dt: { tag: unknown[] }) => dt.tag).flat() ?? [],
-      })) as DiscussionWithRelations[];
-
-      setPinnedDiscussions(formatted.filter((d) => d.is_pinned));
-      setDiscussions(formatted.filter((d) => !d.is_pinned));
-      setLoading(false);
     }
     load();
   }, [slug]);
@@ -84,7 +52,6 @@ export default function TopicPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Breadcrumb */}
       <nav className="mb-4 flex items-center gap-1 text-sm text-muted-foreground">
         <Link href="/" className="hover:text-foreground">Home</Link>
         <ChevronRight className="h-3.5 w-3.5" />
@@ -99,7 +66,6 @@ export default function TopicPage() {
         <span className="text-foreground">{topic?.name}</span>
       </nav>
 
-      {/* Header */}
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <div className="flex items-center gap-2">
@@ -120,7 +86,6 @@ export default function TopicPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        {/* Discussions */}
         <div className="lg:col-span-2">
           {pinnedDiscussions.length === 0 && discussions.length === 0 ? (
             <EmptyState
@@ -155,7 +120,6 @@ export default function TopicPage() {
           )}
         </div>
 
-        {/* Sidebar */}
         <div className="lg:col-span-1">
           <Card className="p-5">
             <div className="mb-3 flex items-center gap-2">

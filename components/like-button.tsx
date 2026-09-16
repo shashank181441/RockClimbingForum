@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { toggleLike } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import { Heart, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -49,58 +50,16 @@ export function LikeButton({
       onToggle(optimisticLiked, optimisticCount);
 
       try {
-        // Prefer RPC (updates likes + like_count under SECURITY DEFINER)
-        const { data, error } = await supabase.rpc('toggle_like', {
-          p_likeable_type: likeableType,
-          p_likeable_id: likeableId,
-        });
-
-        if (!error && data) {
-          const result = data as { liked?: boolean; like_count?: number };
-          onToggle(!!result.liked, typeof result.like_count === 'number' ? result.like_count : optimisticCount);
-          return;
-        }
-
-        // Fallback if RPC not deployed yet: direct likes table write
-        if (optimisticLiked) {
-          let insertError = (
-            await supabase.from('likes').insert({
-              user_id: user.id,
-              likeable_type: likeableType,
-              likeable_id: likeableId,
-            })
-          ).error;
-
-          // Live DB may require integer reaction_type_id (not text "like")
-          if (insertError && /reaction_type|null value|integer/i.test(insertError.message)) {
-            insertError = (
-              await supabase.from('likes').insert({
-                user_id: user.id,
-                likeable_type: likeableType,
-                likeable_id: likeableId,
-                reaction_type_id: 1,
-              })
-            ).error;
-          }
-
-          if (insertError && insertError.code !== '23505') {
-            throw insertError;
-          }
-        } else {
-          const { error: deleteError } = await supabase
-            .from('likes')
-            .delete()
-            .eq('user_id', user.id)
-            .eq('likeable_type', likeableType)
-            .eq('likeable_id', likeableId);
-          if (deleteError) throw deleteError;
-        }
+        const result = await toggleLike(likeableType, likeableId);
+        onToggle(!!result.liked, typeof result.like_count === 'number' ? result.like_count : optimisticCount);
       } catch (err: unknown) {
         onToggle(previousLiked, previousCount);
         const message =
-          err && typeof err === 'object' && 'message' in err
-            ? String((err as { message: string }).message)
-            : 'Failed to update like.';
+          err instanceof ApiError
+            ? err.message
+            : err && typeof err === 'object' && 'message' in err
+              ? String((err as { message: string }).message)
+              : 'Failed to update like.';
         toast.error(message);
       } finally {
         inFlight.current = false;

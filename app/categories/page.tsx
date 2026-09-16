@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { listCategories, listTopics } from '@/lib/api/forum';
 import { useAuth } from '@/lib/auth-context';
 import type { Category } from '@/lib/types';
 import { Card } from '@/components/ui/card';
@@ -15,8 +15,8 @@ interface CategoryWithCounts extends Category {
 }
 
 export default function CategoriesPage() {
-  const { user } = useAuth();
-  const canCreateCategory = !!user;
+  const { user, roles } = useAuth();
+  const canCreateCategory = roles.includes('admin') || roles.includes('moderator');
   const [categories, setCategories] = useState<CategoryWithCounts[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,36 +24,29 @@ export default function CategoriesPage() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const { data, error } = await supabase.from('categories').select('*').order('sort_order');
-      if (error) {
+      try {
+        const list = await listCategories();
+        setCategories(list.map((cat) => ({ ...cat, topic_count: 0 })));
+        setLoading(false);
+
+        if (list.length === 0) return;
+
+        const topics = await listTopics();
+        const counts = new Map<string, number>();
+        for (const t of topics) {
+          counts.set(t.category_id, (counts.get(t.category_id) ?? 0) + 1);
+        }
+
+        setCategories((prev) =>
+          prev.map((cat) => ({
+            ...cat,
+            topic_count: counts.get(cat.id) ?? 0,
+          }))
+        );
+      } catch {
         setError('Failed to load categories.');
         setLoading(false);
-        return;
       }
-
-      const list = data ?? [];
-      // Show list immediately; fill counts in parallel
-      setCategories(list.map((cat) => ({ ...cat, topic_count: 0 })));
-      setLoading(false);
-
-      if (list.length === 0) return;
-
-      const counts = await Promise.all(
-        list.map(async (cat) => {
-          const { count } = await supabase
-            .from('topics')
-            .select('*', { count: 'exact', head: true })
-            .eq('category_id', cat.id);
-          return { id: cat.id, topic_count: count ?? 0 };
-        })
-      );
-
-      setCategories((prev) =>
-        prev.map((cat) => {
-          const match = counts.find((c) => c.id === cat.id);
-          return match ? { ...cat, topic_count: match.topic_count } : cat;
-        })
-      );
     }
     load();
   }, []);

@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { getCategory, listDiscussions } from '@/lib/api/forum';
 import { useAuth } from '@/lib/auth-context';
 import type { Category, Topic } from '@/lib/types';
 import { Card } from '@/components/ui/card';
@@ -18,7 +18,8 @@ interface TopicWithCounts extends Topic {
 export default function CategoryPage() {
   const params = useParams();
   const slug = params.slug as string;
-  const { user } = useAuth();
+  const { user, roles } = useAuth();
+  const canCreateTopic = roles.includes('admin') || roles.includes('moderator');
   const [category, setCategory] = useState<Category | null>(null);
   const [topics, setTopics] = useState<TopicWithCounts[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,52 +30,39 @@ export default function CategoryPage() {
       setLoading(true);
       setError(null);
 
-      const { data: cat, error: catError } = await supabase
-        .from('categories')
-        .select('*')
-        .eq('slug', slug)
-        .maybeSingle();
+      try {
+        const cat = await getCategory(slug);
+        setCategory(cat);
 
-      if (catError || !cat) {
+        const list = (cat.topics ?? []).map((t) => ({ ...t, discussion_count: 0 }));
+        setTopics(list);
+        setLoading(false);
+
+        if (list.length === 0) return;
+
+        const counts = await Promise.all(
+          list.map(async (top) => {
+            try {
+              const { total } = await listDiscussions({ topic_id: top.id, per_page: 1 });
+              return { id: top.id, discussion_count: total };
+            } catch {
+              return { id: top.id, discussion_count: 0 };
+            }
+          })
+        );
+
+        setTopics((prev) =>
+          prev.map((t) => {
+            const match = counts.find((c) => c.id === t.id);
+            return match ? { ...t, discussion_count: match.discussion_count } : t;
+          })
+        );
+      } catch {
         setError('Category not found.');
         setCategory(null);
         setTopics([]);
         setLoading(false);
-        return;
       }
-
-      setCategory(cat);
-
-      const { data: tops } = await supabase
-        .from('topics')
-        .select('*')
-        .eq('category_id', cat.id)
-        .order('sort_order');
-
-      const list = tops ?? [];
-      // End loading as soon as topics arrive — don't wait on counts
-      setTopics(list.map((t) => ({ ...t, discussion_count: 0 })));
-      setLoading(false);
-
-      if (list.length === 0) return;
-
-      const counts = await Promise.all(
-        list.map(async (top) => {
-          const { count } = await supabase
-            .from('discussions')
-            .select('*', { count: 'exact', head: true })
-            .eq('topic_id', top.id)
-            .neq('status', 'deleted');
-          return { id: top.id, discussion_count: count ?? 0 };
-        })
-      );
-
-      setTopics((prev) =>
-        prev.map((t) => {
-          const match = counts.find((c) => c.id === t.id);
-          return match ? { ...t, discussion_count: match.discussion_count } : t;
-        })
-      );
     }
     load();
   }, [slug]);
@@ -103,7 +91,7 @@ export default function CategoryPage() {
           <h1 className="font-display text-2xl font-bold sm:text-3xl">{category?.name}</h1>
           <p className="mt-1 text-muted-foreground">{category?.description}</p>
         </div>
-        {user && category && (
+        {canCreateTopic && category && (
           <CreateTopicDialog
             categoryId={category.id}
             categories={category ? [category] : []}
@@ -120,12 +108,12 @@ export default function CategoryPage() {
           icon={FolderOpen}
           title="No topics in this category"
           description={
-            user
+            canCreateTopic
               ? 'Create the first topic to start discussions here.'
-              : 'Topics will appear here once created. Sign in to add one.'
+              : 'Topics will appear here once created.'
           }
           action={
-            user && category ? (
+            canCreateTopic && category ? (
               <CreateTopicDialog
                 categoryId={category.id}
                 categories={[category]}

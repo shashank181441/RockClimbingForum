@@ -3,7 +3,15 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import {
+  createComment,
+  createReport,
+  getDiscussion,
+  listBookmarks,
+  listComments,
+  toggleBookmark as apiToggleBookmark,
+} from '@/lib/api/forum';
+import { ApiError, mediaUrl } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import type { DiscussionWithRelations, CommentWithProfile, Attachment } from '@/lib/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -15,9 +23,27 @@ import { LikeButton } from '@/components/like-button';
 import { CommentNode } from '@/components/comment-node';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 import { timeAgo, getInitials } from '@/lib/helpers';
-import { ChevronRight, Lock, Pin, Eye, MessageCircle, Bookmark, BookmarkCheck, Flag, ArrowLeft } from 'lucide-react';
+import { ChevronRight, Lock, Pin, Eye, MessageCircle, Bookmark, BookmarkCheck, Flag } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+
+const IMAGE_URL_RE = /^https?:\/\/\S+\.(?:png|jpe?g|gif|webp|avif)(?:\?\S*)?$/i;
+
+function extractBodyAndImages(body: string | null): { text: string; images: string[] } {
+  if (!body) return { text: '', images: [] };
+  const lines = body.split('\n');
+  const images: string[] = [];
+  const textLines: string[] = [];
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (IMAGE_URL_RE.test(trimmed)) {
+      images.push(trimmed);
+    } else {
+      textLines.push(line);
+    }
+  }
+  return { text: textLines.join('\n').trimEnd(), images };
+}
 
 export default function DiscussionPage() {
   const params = useParams();
@@ -35,106 +61,61 @@ export default function DiscussionPage() {
   const [likeCount, setLikeCount] = useState(0);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [likedCommentIds, setLikedCommentIds] = useState<Set<string>>(new Set());
+  const [bodyText, setBodyText] = useState('');
 
   const loadComments = useCallback(async (discId: string) => {
-    const { data: comms } = await supabase
-      .from('comments')
-      .select(`
-        *,
-        profiles:profiles!comments_user_id_fkey(id, username, display_name, avatar_url)
-      `)
-      .eq('discussion_id', discId)
-      .neq('status', 'deleted')
-      .order('created_at', { ascending: true });
-    setComments((comms ?? []) as CommentWithProfile[]);
+    const comms = await listComments(discId);
+    setComments(comms);
   }, []);
 
-  const loadData = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setLoading(true);
-    const { data: disc, error: discError } = await supabase
-      .from('discussions')
-      .select(`
-        *,
-        profiles:profiles!discussions_user_id_fkey(id, username, display_name, avatar_url),
-        topics:topics!discussions_topic_id_fkey(id, name, slug, categories:categories!topics_category_id_fkey(name, slug)),
-        tags:discussion_tags(tag:tags(id, name, slug))
-      `)
-      .eq('slug', slug)
-      .neq('status', 'deleted')
-      .maybeSingle();
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const disc = await getDiscussion(slug);
+      setDiscussion(disc);
+      setLikeCount(disc.like_count);
 
-    if (discError || !disc) {
+      const { text, images } = extractBodyAndImages(disc.body);
+      setBodyText(text);
+      setAttachments(
+        images.map((url, i) => ({
+          id: `embed-${i}`,
+          uploader_id: disc.user_id,
+          storage_path: url,
+          file_url: mediaUrl(url) || url,
+          thumbnail_url: mediaUrl(url) || url,
+          file_type: 'image',
+          attachable_type: 'discussion' as const,
+          attachable_id: disc.id,
+          created_at: disc.created_at,
+        }))
+      );
+
+      await loadComments(disc.id);
+    } catch {
       setError('Discussion not found.');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    const formatted = {
-      ...disc,
-      tags: disc.tags?.map((dt: { tag: unknown[] }) => dt.tag).flat() ?? [],
-    } as DiscussionWithRelations;
-    setDiscussion(formatted);
-    setLikeCount(formatted.like_count);
-
-    // Increment view count only on full (non-silent) loads
-    if (!opts?.silent) {
-      await supabase.rpc('increment_view_count', { disc_id: formatted.id }).then(({ error }: { error: unknown }) => {
-        if (error) console.warn('Failed to increment view count');
-      });
-    }
-
-    // Load attachments
-    const { data: atts } = await supabase
-      .from('attachments')
-      .select('*')
-      .eq('attachable_type', 'discussion')
-      .eq('attachable_id', formatted.id)
-      .order('created_at');
-    setAttachments(atts ?? []);
-
-    // Load comments
-    await loadComments(formatted.id);
-
-    setLoading(false);
   }, [slug, loadComments]);
 
-  // Load discussion once per slug (not on every auth token refresh)
   useEffect(() => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only slug
   }, [slug]);
 
-  // When user becomes available, refresh personal like/bookmark state without full reload UI
   useEffect(() => {
     if (!user || !discussion) return;
     let cancelled = false;
     (async () => {
-      const { data: likeData } = await supabase
-        .from('likes')
-        .select('id')
-        .eq('likeable_type', 'discussion')
-        .eq('likeable_id', discussion.id)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (cancelled) return;
-      setIsLiked(!!likeData);
-
-      const { data: bookmarkData } = await supabase
-        .from('bookmarks')
-        .select('discussion_id')
-        .eq('discussion_id', discussion.id)
-        .eq('user_id', user.id)
-        .maybeSingle();
-      if (cancelled) return;
-      setIsBookmarked(!!bookmarkData);
-
-      const { data: commentLikes } = await supabase
-        .from('likes')
-        .select('likeable_id')
-        .eq('likeable_type', 'comment')
-        .eq('user_id', user.id);
-      if (cancelled) return;
-      setLikedCommentIds(new Set((commentLikes ?? []).map((l) => l.likeable_id)));
+      try {
+        const bookmarks = await listBookmarks();
+        if (!cancelled) {
+          setIsBookmarked(bookmarks.some((d) => d.id === discussion.id));
+        }
+      } catch {
+        /* ignore */
+      }
     })();
     return () => {
       cancelled = true;
@@ -150,32 +131,19 @@ export default function DiscussionPage() {
     if (!newComment.trim() || !discussion) return;
     setSubmittingComment(true);
 
-    const { error } = await supabase.from('comments').insert({
-      discussion_id: discussion.id,
-      user_id: user.id,
-      body: newComment.trim(),
-      depth: 0,
-      path: '',
-    });
-
-    if (error) {
-      toast.error('Failed to post comment.');
-    } else {
-      // Update discussion last_activity_at and comment_count
-      const { count } = await supabase
-        .from('comments')
-        .select('*', { count: 'exact', head: true })
-        .eq('discussion_id', discussion.id)
-        .neq('status', 'deleted');
-      await supabase
-        .from('discussions')
-        .update({ last_activity_at: new Date().toISOString(), comment_count: count ?? 0 })
-        .eq('id', discussion.id);
+    try {
+      await createComment(discussion.id, newComment.trim());
       setNewComment('');
       await loadComments(discussion.id);
+      setDiscussion((prev) =>
+        prev ? { ...prev, comment_count: prev.comment_count + 1 } : prev
+      );
       toast.success('Comment posted!');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to post comment.');
+    } finally {
+      setSubmittingComment(false);
     }
-    setSubmittingComment(false);
   }
 
   async function toggleBookmark() {
@@ -183,30 +151,29 @@ export default function DiscussionPage() {
       toast.error('Please sign in to bookmark.');
       return;
     }
-    if (isBookmarked) {
-      await supabase.from('bookmarks').delete().eq('user_id', user.id).eq('discussion_id', discussion.id);
-      setIsBookmarked(false);
-      toast.success('Removed from bookmarks.');
-    } else {
-      await supabase.from('bookmarks').insert({ user_id: user.id, discussion_id: discussion.id });
-      setIsBookmarked(true);
-      toast.success('Added to bookmarks.');
+    try {
+      const result = await apiToggleBookmark(discussion.id);
+      setIsBookmarked(result.bookmarked);
+      toast.success(result.bookmarked ? 'Added to bookmarks.' : 'Removed from bookmarks.');
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update bookmark.');
     }
   }
 
   async function reportDiscussion() {
     if (!user || !discussion) return;
-    const { error } = await supabase.from('reports').insert({
-      reporter_id: user.id,
-      reportable_type: 'discussion',
-      reportable_id: discussion.id,
-      reason: 'Reported by user',
-    });
-    if (error) toast.error('Failed to report.');
-    else toast.success('Discussion reported.');
+    try {
+      await createReport({
+        reportable_type: 'discussion',
+        reportable_id: discussion.id,
+        reason: 'Reported by user',
+      });
+      toast.success('Discussion reported.');
+    } catch {
+      toast.error('Failed to report.');
+    }
   }
 
-  // Build comment tree
   const rootComments = comments.filter((c) => !c.parent_id);
   const getReplies = (parentId: string) => comments.filter((c) => c.parent_id === parentId);
 
@@ -218,7 +185,6 @@ export default function DiscussionPage() {
 
   return (
     <div className="container mx-auto px-4 py-8">
-      {/* Breadcrumb */}
       <nav className="mb-4 flex items-center gap-1 text-sm text-muted-foreground">
         <Link href="/" className="hover:text-foreground">Home</Link>
         <ChevronRight className="h-3.5 w-3.5" />
@@ -242,9 +208,7 @@ export default function DiscussionPage() {
       </nav>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-        {/* Main content */}
         <div className="lg:col-span-3">
-          {/* Discussion header */}
           <Card className="p-5 sm:p-6">
             <div className="flex flex-wrap items-center gap-2">
               {discussion.is_pinned && (
@@ -287,16 +251,14 @@ export default function DiscussionPage() {
               </div>
             </div>
 
-            {/* Body */}
-            {discussion.body && (
+            {bodyText && (
               <div className="prose-climbing mt-4 text-sm leading-relaxed sm:text-base">
-                {discussion.body.split('\n').map((line, i) => (
+                {bodyText.split('\n').map((line, i) => (
                   <p key={i}>{line}</p>
                 ))}
               </div>
             )}
 
-            {/* Image gallery */}
             {attachments.length > 0 && (
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {attachments.map((att) => (
@@ -318,7 +280,6 @@ export default function DiscussionPage() {
               </div>
             )}
 
-            {/* Actions */}
             <div className="mt-5 flex items-center gap-2 border-t border-border pt-4">
               <LikeButton
                 likeableType="discussion"
@@ -348,13 +309,11 @@ export default function DiscussionPage() {
             </div>
           </Card>
 
-          {/* Comments section */}
           <div className="mt-6">
             <h2 className="mb-4 font-display text-lg font-bold">
               {discussion.comment_count} {discussion.comment_count === 1 ? 'Comment' : 'Comments'}
             </h2>
 
-            {/* Comment box */}
             {!isLocked ? (
               <Card className="mb-6 p-4">
                 <div className="flex gap-3">
@@ -388,7 +347,6 @@ export default function DiscussionPage() {
               </Card>
             )}
 
-            {/* Comment tree */}
             {rootComments.length === 0 ? (
               <EmptyState
                 icon={MessageCircle}
@@ -431,7 +389,6 @@ export default function DiscussionPage() {
           </div>
         </div>
 
-        {/* Sidebar */}
         <div className="lg:col-span-1">
           <Card className="sticky top-20 p-5">
             <h3 className="mb-3 font-display text-sm font-semibold">Discussion Info</h3>

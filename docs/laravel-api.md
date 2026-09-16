@@ -1,24 +1,28 @@
-# Laravel API migration (feature/laravel-api)
+# Laravel API cutover (done)
 
-The forum frontend on `main` still uses **Supabase**. This branch prepares a switch to the Laravel API in:
+The Nepal Climbs forum frontend now uses the **Laravel API** (Sanctum bearer tokens) via:
 
-`C:\Users\User\Documents\projects\laravel\projects\rock_laravel`
+- `lib/api/client.ts` — `apiFetch`, `getToken`, `setToken`, `mediaUrl`
+- `lib/api/forum.ts` — auth, categories, topics, discussions, comments, likes, bookmarks, profiles, uploads, notifications, moderation
+- `lib/api/adapters.ts` — normalizes Laravel payloads to existing frontend types
+- `lib/auth-context.tsx` — Sanctum session via `fetchMe` / `setAuthState`
 
-## Env (optional until cutover)
+## Env
 
 ```env
-# Leave empty to keep Supabase as the data/auth source
-NEXT_PUBLIC_API_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_URL=https://rockapi.vendingao.com/api
+NEXT_PUBLIC_SITE_URL=https://rock.vendingao.com
 ```
 
-Helper: `lib/api/client.ts` (`isLaravelApiEnabled()`, `apiFetch()`).
+Supabase env vars may remain in local `.env` but are unused by `app/` and `components/`.
 
 ## Backend
 
-- Laravel 13 + Sanctum
-- PostgreSQL schema mirroring forum tables
-- CI: `.github/workflows/ci.yml`
-- Deploy template: `.github/workflows/deploy.yml` (configure GitHub secrets yourself)
-- Docker Compose on port **8081** by default
+- Laravel app: `rock_laravel`
+- Auth: Sanctum personal access tokens (`device_name: web`)
+- Public reads: categories, topics, discussions, profiles (no token)
+- Authenticated writes: create/update content, likes, bookmarks, uploads, moderation
 
-Do not point production at Laravel until auth + data migration is verified.
+## Docker
+
+Build args / env must include `NEXT_PUBLIC_API_URL` so the client bundle points at the API.

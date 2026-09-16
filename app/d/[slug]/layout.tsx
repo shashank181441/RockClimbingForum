@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { createServerSupabase } from '@/lib/supabase/server';
+import { apiFetch } from '@/lib/api/client';
 import { buildPageMetadata } from '@/lib/seo';
 
 type Props = { params: { slug: string }; children: React.ReactNode };
@@ -13,19 +13,13 @@ function excerpt(text: string | null | undefined, max = 160): string {
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
-    const supabase = createServerSupabase();
-    const { data: discussion } = await supabase
-      .from('discussions')
-      .select(
-        `
-        id, title, slug, body,
-        topics:topics!discussions_topic_id_fkey(name),
-        profiles:profiles!discussions_user_id_fkey(display_name, username)
-      `
-      )
-      .eq('slug', params.slug)
-      .neq('status', 'deleted')
-      .maybeSingle();
+    const discussion = await apiFetch<{
+      title: string;
+      slug: string;
+      body: string | null;
+      topic?: { name?: string } | null;
+      user?: { username?: string; profile?: { display_name?: string; username?: string } } | null;
+    }>(`/discussions/${params.slug}`, { token: null });
 
     if (!discussion) {
       return buildPageMetadata({
@@ -36,29 +30,19 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       });
     }
 
-    const topicName = (discussion.topics as { name?: string } | null)?.name;
+    const topicName = discussion.topic?.name;
     const author =
-      (discussion.profiles as { display_name?: string; username?: string } | null)?.display_name ||
-      (discussion.profiles as { username?: string } | null)?.username;
+      discussion.user?.profile?.display_name ||
+      discussion.user?.profile?.username ||
+      discussion.user?.username;
     const desc =
       excerpt(discussion.body) ||
       `${discussion.title}${topicName ? ` — ${topicName}` : ''}${author ? ` by ${author}` : ''} on Nepal Climbs.`;
-
-    const { data: imgs } = await supabase
-      .from('attachments')
-      .select('file_url, thumbnail_url')
-      .eq('attachable_type', 'discussion')
-      .eq('attachable_id', discussion.id)
-      .order('created_at', { ascending: true })
-      .limit(1);
-
-    const image = imgs?.[0]?.thumbnail_url || imgs?.[0]?.file_url || null;
 
     return buildPageMetadata({
       title: discussion.title,
       description: desc,
       path: `/d/${discussion.slug}`,
-      image,
       type: 'article',
     });
   } catch {

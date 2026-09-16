@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { login } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +15,7 @@ import { toast } from 'sonner';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, loading, setAuthState } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -27,13 +28,19 @@ export default function LoginPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) {
-      toast.error(error.message);
-      setSubmitting(false);
-    } else {
+    try {
+      const payload = await login(email, password);
+      setAuthState({
+        user: payload.user,
+        profile: payload.profile,
+        roles: payload.roles,
+      });
       toast.success('Namaste! Welcome back.');
       router.push('/');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Failed to sign in.';
+      toast.error(message);
+      setSubmitting(false);
     }
   }
 

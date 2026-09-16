@@ -3,21 +3,22 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import {
+  deleteNotification as apiDeleteNotification,
+  listNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+} from '@/lib/api/forum';
 import { useAuth } from '@/lib/auth-context';
-import type { Notification, Profile } from '@/lib/types';
+import type { Notification } from '@/lib/types';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 import { Bell, Heart, MessageCircle, UserPlus, Award, Shield, AtSign, Check, CheckCheck, Trash2 } from 'lucide-react';
 import { timeAgo, getInitials } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-
-interface NotificationWithActor extends Notification {
-  actor: Profile | null;
-}
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   reply: MessageCircle,
@@ -32,33 +33,26 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
 export default function NotificationsPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
-  const [notifications, setNotifications] = useState<NotificationWithActor[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadNotifications = useCallback(async () => {
+  const loadNotifications = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user) {
       setLoading(false);
       setNotifications([]);
       return;
     }
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('notifications')
-      .select(`
-        *,
-        actor:profiles!notifications_actor_id_fkey(id, username, display_name, avatar_url)
-      `)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (error) {
+    if (!opts?.silent) setLoading(true);
+    try {
+      const data = await listNotifications();
+      setNotifications(data);
+      setError(null);
+    } catch {
       setError('Failed to load notifications.');
-    } else {
-      setNotifications((data ?? []) as NotificationWithActor[]);
+    } finally {
+      if (!opts?.silent) setLoading(false);
     }
-    setLoading(false);
   }, [user?.id]);
 
   useEffect(() => {
@@ -69,44 +63,16 @@ export default function NotificationsPage() {
     loadNotifications();
   }, [loadNotifications]);
 
-  // Realtime subscription — append new rows instead of full reload when possible
   useEffect(() => {
     if (!user) return;
-    const channel = supabase
-      .channel('notifications-page')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'notifications',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          // Soft refresh without flipping the whole page to loading skeleton
-          void (async () => {
-            const { data } = await supabase
-              .from('notifications')
-              .select(`
-                *,
-                actor:profiles!notifications_actor_id_fkey(id, username, display_name, avatar_url)
-              `)
-              .eq('user_id', user.id)
-              .order('created_at', { ascending: false })
-              .limit(50);
-            if (data) setNotifications(data as NotificationWithActor[]);
-          })();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user?.id]);
+    const interval = setInterval(() => {
+      void loadNotifications({ silent: true });
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, [user?.id, loadNotifications]);
 
   async function markAsRead(id: string) {
-    await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+    await markNotificationRead(id);
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true } : n))
     );
@@ -114,13 +80,13 @@ export default function NotificationsPage() {
 
   async function markAllAsRead() {
     if (!user) return;
-    await supabase.from('notifications').update({ is_read: true }).eq('user_id', user.id).eq('is_read', false);
+    await markAllNotificationsRead();
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
     toast.success('All notifications marked as read.');
   }
 
   async function deleteNotification(id: string) {
-    await supabase.from('notifications').delete().eq('id', id);
+    await apiDeleteNotification(id);
     setNotifications((prev) => prev.filter((n) => n.id !== id));
   }
 
@@ -169,9 +135,8 @@ export default function NotificationsPage() {
               >
                 <div className="relative shrink-0">
                   <Avatar className="h-10 w-10">
-                    <AvatarImage src={notif.actor?.avatar_url ?? undefined} alt={notif.actor?.display_name ?? ''} />
                     <AvatarFallback className="text-xs font-bold">
-                      {getInitials(notif.actor?.display_name || notif.actor?.username)}
+                      {getInitials(notif.title || notif.type)}
                     </AvatarFallback>
                   </Avatar>
                   <div className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-background">
@@ -181,20 +146,17 @@ export default function NotificationsPage() {
 
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    {notif.actor && (
-                      <span className="text-sm font-medium">
-                        {notif.actor.display_name || notif.actor.username}
-                      </span>
-                    )}
+                    <span className="text-sm font-medium">
+                      {notif.title || `New ${notif.type}`}
+                    </span>
                     <span className="text-xs text-muted-foreground">{timeAgo(notif.created_at)}</span>
                     {!notif.is_read && (
                       <span className="ml-1 h-2 w-2 rounded-full bg-accent" />
                     )}
                   </div>
-                  <p className="mt-0.5 text-sm text-muted-foreground">
-                    {notif.title || `New ${notif.type}`}
-                    {notif.body && <span className="block text-xs">{notif.body}</span>}
-                  </p>
+                  {notif.body && (
+                    <p className="mt-0.5 text-sm text-muted-foreground">{notif.body}</p>
+                  )}
                   {notif.url && (
                     <Link href={notif.url} className="mt-1 inline-block text-xs font-medium text-primary hover:underline">
                       View
@@ -228,4 +190,3 @@ export default function NotificationsPage() {
     </div>
   );
 }
-

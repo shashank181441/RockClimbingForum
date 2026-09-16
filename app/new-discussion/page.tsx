@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabase/client';
+import {
+  createDiscussion,
+  listCategories,
+  listTags,
+  listTopics,
+} from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import type { Topic, Tag, Category } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -11,7 +17,6 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent } from '@/components/ui/card';
 import { Loader2, ArrowLeft } from 'lucide-react';
-import { slugify } from '@/lib/helpers';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { CreateTopicDialog } from '@/components/create-topic-dialog';
@@ -28,7 +33,8 @@ import { FolderOpen } from 'lucide-react';
 export default function NewDiscussionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, loading: authLoading } = useAuth();
+  const { user, roles, loading: authLoading } = useAuth();
+  const canManageTaxonomy = roles.includes('admin') || roles.includes('moderator');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [selectedTopicId, setSelectedTopicId] = useState('');
@@ -49,23 +55,26 @@ export default function NewDiscussionPage() {
   useEffect(() => {
     async function loadData() {
       setLoadingData(true);
-      const [topsRes, tagsRes, catsRes] = await Promise.all([
-        supabase.from('topics').select('*').order('name'),
-        supabase.from('tags').select('*').order('name'),
-        supabase.from('categories').select('*').order('sort_order'),
-      ]);
+      try {
+        const [tops, tags, cats] = await Promise.all([
+          listTopics(),
+          listTags(),
+          listCategories(),
+        ]);
+        setTopics(tops);
+        setAllTags(tags);
+        setCategories(cats);
 
-      const tops = topsRes.data ?? [];
-      setTopics(tops);
-      setAllTags(tagsRes.data ?? []);
-      setCategories(catsRes.data ?? []);
-
-      const topicSlug = searchParams.get('topic');
-      if (topicSlug) {
-        const matched = tops.find((t) => t.slug === topicSlug);
-        if (matched) setSelectedTopicId(matched.id);
+        const topicSlug = searchParams.get('topic');
+        if (topicSlug) {
+          const matched = tops.find((t) => t.slug === topicSlug);
+          if (matched) setSelectedTopicId(matched.id);
+        }
+      } catch {
+        toast.error('Failed to load form data.');
+      } finally {
+        setLoadingData(false);
       }
-      setLoadingData(false);
     }
     loadData();
   }, [searchParams]);
@@ -94,44 +103,25 @@ export default function NewDiscussionPage() {
 
     setSubmitting(true);
 
-    const slugBase = slugify(title);
-    const slug = `${slugBase}-${Date.now().toString(36)}`;
+    const imageBlock = images.map((img) => img.file_url).join('\n');
+    const finalBody = [body.trim(), imageBlock].filter(Boolean).join('\n\n') || title.trim();
 
-    const { data: disc, error: discError } = await supabase
-      .from('discussions')
-      .insert({
-        topic_id: selectedTopicId,
-        user_id: user.id,
-        title: title.trim(),
-        slug,
-        body: body.trim(),
-      })
-      .select('*')
-      .single();
-
-    if (discError || !disc) {
-      toast.error('Failed to create discussion.');
-      setSubmitting(false);
-      return;
-    }
-
-    if (selectedTags.length > 0) {
-      const tagRows = selectedTags.map((tag_id) => ({
-        discussion_id: disc.id,
-        tag_id,
-      }));
-      await supabase.from('discussion_tags').insert(tagRows);
-    }
-
-    // Images already in storage — just insert attachment rows
     try {
-      await attachUploadedImages(images, disc.id, user.id);
-    } catch {
-      toast.error('Discussion created, but linking images failed.');
-    }
+      const disc = await createDiscussion({
+        topic_id: selectedTopicId,
+        title: title.trim(),
+        body: finalBody,
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+      });
 
-    toast.success('Discussion created!');
-    router.push(`/d/${slug}`);
+      await attachUploadedImages(images);
+
+      toast.success('Discussion created!');
+      router.push(`/d/${disc.slug}`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to create discussion.');
+      setSubmitting(false);
+    }
   }
 
   if (authLoading || loadingData) {
@@ -170,6 +160,7 @@ export default function NewDiscussionPage() {
                   : 'Create a topic to start posting discussions.'
               }
               action={
+                canManageTaxonomy ? (
                 <div className="flex flex-wrap justify-center gap-2">
                   {categories.length > 0 ? (
                     <CreateTopicDialog
@@ -185,17 +176,17 @@ export default function NewDiscussionPage() {
                     />
                   )}
                 </div>
+                ) : undefined
               }
             />
           ) : (
             <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Images at top — upload immediately on select */}
               <EarlyImageUpload value={images} onChange={setImages} maxImages={8} />
 
-              {/* Topic selector */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <Label htmlFor="topic">Topic *</Label>
+                  {canManageTaxonomy && (
                   <CreateTopicDialog
                     categories={categories}
                     onCreated={(topic) => {
@@ -208,6 +199,7 @@ export default function NewDiscussionPage() {
                       </Button>
                     }
                   />
+                  )}
                 </div>
                 <select
                   id="topic"
@@ -225,7 +217,6 @@ export default function NewDiscussionPage() {
                 </select>
               </div>
 
-              {/* Title */}
               <div className="space-y-2">
                 <Label htmlFor="title">Title *</Label>
                 <Input
@@ -238,7 +229,6 @@ export default function NewDiscussionPage() {
                 />
               </div>
 
-              {/* Body */}
               <div className="space-y-2">
                 <Label htmlFor="body">Body</Label>
                 <Textarea
@@ -254,7 +244,6 @@ export default function NewDiscussionPage() {
                 </p>
               </div>
 
-              {/* Tags */}
               {allTags.length > 0 && (
                 <div className="space-y-2">
                   <Label>Tags</Label>
@@ -278,7 +267,6 @@ export default function NewDiscussionPage() {
                 </div>
               )}
 
-              {/* Submit */}
               <div className="flex justify-end gap-2 border-t border-border pt-4">
                 <Button type="button" variant="ghost" onClick={handleCancel}>
                   Cancel

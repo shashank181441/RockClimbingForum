@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase/client';
+import { updateProfile, uploadImage as apiUploadImage } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,27 +68,6 @@ export default function SettingsPage() {
     }
   }, [profile]);
 
-  useEffect(() => {
-    if (user) {
-      supabase.from('user_settings').select('*').eq('user_id', user.id).maybeSingle().then(({ data }) => {
-        if (data) setSettings(data as typeof settings);
-      });
-    }
-  }, [user]);
-
-  async function uploadImage(file: File, folder: string): Promise<string | null> {
-    if (!user) return null;
-    const ext = file.name.split('.').pop();
-    const filePath = `${user.id}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const { error } = await supabase.storage.from('forum-images').upload(filePath, file);
-    if (error) {
-      toast.error(`Failed to upload ${folder}.`);
-      return null;
-    }
-    const { data: urlData } = supabase.storage.from('forum-images').getPublicUrl(filePath);
-    return urlData.publicUrl;
-  }
-
   async function handleSave() {
     if (!user || !profile) return;
     setSaving(true);
@@ -95,46 +75,40 @@ export default function SettingsPage() {
     let avatarUrl = profile.avatar_url;
     let coverUrl = profile.cover_image_url;
 
-    if (avatarFile) {
-      const url = await uploadImage(avatarFile, 'avatars');
-      if (url) avatarUrl = url;
-    }
-    if (coverFile) {
-      const url = await uploadImage(coverFile, 'covers');
-      if (url) coverUrl = url;
-    }
+    try {
+      if (avatarFile) {
+        const uploaded = await apiUploadImage(avatarFile);
+        avatarUrl = uploaded.url;
+      }
+      if (coverFile) {
+        const uploaded = await apiUploadImage(coverFile);
+        coverUrl = uploaded.url;
+      }
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({
+      await updateProfile({
         display_name: displayName || null,
         bio: bio || null,
         location: location || null,
         climbing_grade_max: climbingGradeMax || null,
         climbing_style: climbingStyle || null,
-        years_climbing: yearsClimbing ? parseInt(yearsClimbing) : null,
+        years_climbing: yearsClimbing ? parseInt(yearsClimbing, 10) : null,
         website_url: websiteUrl || null,
         instagram_handle: instagramHandle || null,
         signature: signature || null,
         avatar_url: avatarUrl,
         cover_image_url: coverUrl,
-      })
-      .eq('id', user.id);
+        theme: theme ?? null,
+      });
 
-    if (error) {
-      toast.error('Failed to save profile.');
-    } else {
       await refreshProfile();
       toast.success('Profile saved!');
+      // Notification prefs UI kept; no backend endpoint yet
+      void settings;
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to save profile.');
+    } finally {
+      setSaving(false);
     }
-
-    // Save settings
-    await supabase.from('user_settings').upsert({
-      user_id: user.id,
-      ...settings,
-    });
-
-    setSaving(false);
   }
 
   if (authLoading) {
@@ -150,14 +124,12 @@ export default function SettingsPage() {
     <div className="container mx-auto max-w-3xl px-4 py-8">
       <h1 className="mb-6 font-display text-2xl font-bold sm:text-3xl">Settings</h1>
 
-      {/* Profile section */}
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="font-display text-lg">Profile</CardTitle>
           <CardDescription>Update your public profile information.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Avatar + Cover */}
           <div className="space-y-4">
             <div>
               <Label>Avatar</Label>
@@ -241,7 +213,6 @@ export default function SettingsPage() {
             <p className="text-xs text-muted-foreground">{bio.length}/500 characters</p>
           </div>
 
-          {/* Climbing stats */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label htmlFor="grade">Max Grade</Label>
@@ -275,7 +246,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Theme section */}
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="font-display text-lg">Appearance</CardTitle>
@@ -304,11 +274,12 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Notification settings */}
       <Card className="mb-6">
         <CardHeader>
           <CardTitle className="font-display text-lg">Notifications</CardTitle>
-          <CardDescription>Choose what you want to be notified about.</CardDescription>
+          <CardDescription>
+            Preference toggles are kept for the UI; saving currently updates your profile only.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           {[
@@ -334,7 +305,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Save button */}
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving} size="lg" className="gap-2">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase/client';
+import { createTopic, listCategories } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import { slugify } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
@@ -56,11 +57,9 @@ export function CreateTopicDialog({
       return;
     }
     if (!open) return;
-    supabase
-      .from('categories')
-      .select('*')
-      .order('sort_order')
-      .then(({ data }) => setCategories(data ?? []));
+    listCategories()
+      .then(setCategories)
+      .catch(() => setCategories([]));
   }, [open, categoriesProp]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -78,32 +77,25 @@ export function CreateTopicDialog({
     const slugBase = slugify(name);
     const slug = `${slugBase || 'topic'}-${Date.now().toString(36)}`;
 
-    const { data, error } = await supabase
-      .from('topics')
-      .insert({
+    try {
+      const data = await createTopic({
         category_id: selectedCategoryId,
         name: name.trim(),
         slug,
-        description: description.trim() || null,
-        created_by: user.id,
-      })
-      .select('*')
-      .single();
-
-    setSubmitting(false);
-
-    if (error || !data) {
-      toast.error(error?.message || 'Failed to create topic.');
-      return;
-    }
-
-    toast.success('Topic created.');
-    setName('');
-    setDescription('');
-    setOpen(false);
-    onCreated?.(data as Topic);
-    if (navigateOnCreate) {
-      router.push(`/topics/${data.slug}`);
+        description: description.trim() || undefined,
+      });
+      toast.success('Topic created.');
+      setName('');
+      setDescription('');
+      setOpen(false);
+      onCreated?.(data);
+      if (navigateOnCreate) {
+        router.push(`/topics/${data.slug}`);
+      }
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to create topic.');
+    } finally {
+      setSubmitting(false);
     }
   }
 

@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { register } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -11,11 +12,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Mountain, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
-import { getAuthCallbackUrl } from '@/lib/site-url';
 
 export default function SignupPage() {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, loading, setAuthState } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
@@ -33,34 +33,20 @@ export default function SignupPage() {
       return;
     }
     setSubmitting(true);
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { username },
-        emailRedirectTo: getAuthCallbackUrl(),
-      },
-    });
-    if (error) {
-      toast.error(error.message);
-      setSubmitting(false);
-      return;
-    }
-
-    if (data.session) {
+    try {
+      const payload = await register(username, email, password);
+      setAuthState({
+        user: payload.user,
+        profile: payload.profile,
+        roles: payload.roles,
+      });
       toast.success('Account created! Welcome to Nepal Climbs.');
       router.push('/');
-      return;
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Something went wrong. Please try again.';
+      toast.error(message);
+      setSubmitting(false);
     }
-
-    if (data.user) {
-      toast.success('Check your email to confirm your account.');
-      router.push('/login');
-      return;
-    }
-
-    toast.error('Something went wrong. Please try again.');
-    setSubmitting(false);
   }
 
   return (

@@ -1,17 +1,15 @@
 import type { Metadata } from 'next';
-import { createServerSupabase } from '@/lib/supabase/server';
+import { apiFetch } from '@/lib/api/client';
 import { buildPageMetadata } from '@/lib/seo';
 
 type Props = { params: { slug: string }; children: React.ReactNode };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   try {
-    const supabase = createServerSupabase();
-    const { data } = await supabase
-      .from('categories')
-      .select('name, description, slug')
-      .eq('slug', params.slug)
-      .maybeSingle();
+    const data = await apiFetch<{ name: string; description: string | null; slug: string }>(
+      `/categories/${params.slug}`,
+      { token: null }
+    );
 
     if (!data) {
       return buildPageMetadata({

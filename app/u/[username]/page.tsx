@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { supabase } from '@/lib/supabase/client';
+import { getProfile, listDiscussions, toggleFollow } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import type { Profile, DiscussionWithRelations, Badge, UserRole } from '@/lib/types';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -13,8 +14,24 @@ import { Badge as UIBadge } from '@/components/ui/badge';
 import { DiscussionCard } from '@/components/discussion-card';
 import { EmptyState, ErrorState, LoadingState } from '@/components/states';
 import { MapPin, Award, Link as LinkIcon, Instagram, Mountain, Calendar, UserPlus, UserCheck } from 'lucide-react';
-import { formatDate, getInitials, timeAgo } from '@/lib/helpers';
+import { formatDate, getInitials } from '@/lib/helpers';
 import { toast } from 'sonner';
+
+function adaptBadges(raw: unknown[]): Badge[] {
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const b = item as Record<string, unknown>;
+      return {
+        id: String(b.id ?? ''),
+        name: String(b.name ?? ''),
+        description: (b.description as string | null) ?? null,
+        icon_url: (b.icon_url as string | null) ?? null,
+        color: (b.color as string | null) ?? null,
+      } satisfies Badge;
+    })
+    .filter((b): b is Badge => !!b && !!b.id);
+}
 
 export default function ProfilePage() {
   const params = useParams();
@@ -33,99 +50,45 @@ export default function ProfilePage() {
   useEffect(() => {
     async function load() {
       setLoading(true);
-      const { data: prof, error: profError } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('username', username)
-        .maybeSingle();
+      try {
+        const data = await getProfile(username);
+        if (!data.profile) {
+          setError('User not found.');
+          setLoading(false);
+          return;
+        }
+        setProfile(data.profile);
+        setBadges(adaptBadges(data.badges));
+        setRoles([]);
 
-      if (profError || !prof) {
+        const { data: discs } = await listDiscussions({
+          user_id: data.profile.id,
+          per_page: 10,
+        });
+        setDiscussions(discs);
+        setFollowerCount(0);
+        setFollowingCount(0);
+        setIsFollowing(false);
+      } catch {
         setError('User not found.');
+      } finally {
         setLoading(false);
-        return;
       }
-      setProfile(prof);
-
-      const { data: roleData } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', prof.id);
-      setRoles((roleData ?? []).map((r: { role: UserRole }) => r.role));
-
-      const { data: badgeData } = await supabase
-        .from('user_badges')
-        .select('badges:badges(id, name, description, icon_url, color)')
-        .eq('user_id', prof.id);
-      setBadges(
-        (badgeData ?? [])
-          .map((ub) => {
-            const raw = (ub as { badges: Badge | Badge[] | null }).badges;
-            return Array.isArray(raw) ? raw[0] : raw;
-          })
-          .filter((b): b is Badge => !!b)
-      );
-
-      const { data: discs } = await supabase
-        .from('discussions')
-        .select(`
-          *,
-          profiles:profiles!discussions_user_id_fkey(id, username, display_name, avatar_url),
-          topics:topics!discussions_topic_id_fkey(id, name, slug),
-          tags:discussion_tags(tag:tags(id, name, slug))
-        `)
-        .eq('user_id', prof.id)
-        .neq('status', 'deleted')
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      const formatted = (discs ?? []).map((d) => ({
-        ...d,
-        tags: d.tags?.map((dt: { tag: unknown[] }) => dt.tag).flat() ?? [],
-      })) as DiscussionWithRelations[];
-      setDiscussions(formatted);
-
-      // Follower counts
-      const { count: fc } = await supabase
-        .from('follows')
-        .select('*', { count: 'exact', head: true })
-        .eq('following_id', prof.id);
-      setFollowerCount(fc ?? 0);
-
-      const { count: fg } = await supabase
-        .from('follows')
-        .select('*', { count: 'exact', head: true })
-        .eq('follower_id', prof.id);
-      setFollowingCount(fg ?? 0);
-
-      // Check if current user follows
-      if (currentUser && currentUser.id !== prof.id) {
-        const { data: followData } = await supabase
-          .from('follows')
-          .select('follower_id')
-          .eq('follower_id', currentUser.id)
-          .eq('following_id', prof.id)
-          .maybeSingle();
-        setIsFollowing(!!followData);
-      }
-
-      setLoading(false);
     }
     load();
   }, [username, currentUser]);
 
-  async function toggleFollow() {
+  async function handleToggleFollow() {
     if (!currentUser || !profile) {
       toast.error('Please sign in to follow.');
       return;
     }
-    if (isFollowing) {
-      await supabase.from('follows').delete().eq('follower_id', currentUser.id).eq('following_id', profile.id);
-      setIsFollowing(false);
-      setFollowerCount((c) => Math.max(0, c - 1));
-    } else {
-      await supabase.from('follows').insert({ follower_id: currentUser.id, following_id: profile.id });
-      setIsFollowing(true);
-      setFollowerCount((c) => c + 1);
+    try {
+      const result = await toggleFollow(profile.id);
+      setIsFollowing(result.following);
+      setFollowerCount((c) => Math.max(0, result.following ? c + 1 : c - 1));
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : 'Failed to update follow.');
     }
   }
 
@@ -137,7 +100,6 @@ export default function ProfilePage() {
 
   return (
     <div className="container mx-auto max-w-4xl px-4 py-8">
-      {/* Cover + avatar */}
       <div className="relative mb-16">
         <div className="h-40 overflow-hidden rounded-xl bg-gradient-to-br from-primary/20 via-muted to-accent/10 sm:h-48">
           {profile.cover_image_url && (
@@ -162,7 +124,7 @@ export default function ProfilePage() {
         )}
         {!isOwnProfile && currentUser && (
           <div className="absolute right-4 top-4">
-            <Button size="sm" variant={isFollowing ? 'secondary' : 'default'} onClick={toggleFollow} className="gap-1.5">
+            <Button size="sm" variant={isFollowing ? 'secondary' : 'default'} onClick={handleToggleFollow} className="gap-1.5">
               {isFollowing ? <UserCheck className="h-4 w-4" /> : <UserPlus className="h-4 w-4" />}
               {isFollowing ? 'Following' : 'Follow'}
             </Button>
@@ -170,7 +132,6 @@ export default function ProfilePage() {
         )}
       </div>
 
-      {/* Profile info */}
       <div className="mb-6 px-1">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="font-display text-2xl font-bold">{profile.display_name || profile.username}</h1>
@@ -213,7 +174,6 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Climbing stats */}
       {(profile.climbing_grade_max || profile.climbing_style || profile.years_climbing) && (
         <Card className="mb-6 p-5">
           <div className="mb-3 flex items-center gap-2">
@@ -243,7 +203,6 @@ export default function ProfilePage() {
         </Card>
       )}
 
-      {/* Badges */}
       {badges.length > 0 && (
         <Card className="mb-6 p-5">
           <div className="mb-3 flex items-center gap-2">
@@ -266,7 +225,6 @@ export default function ProfilePage() {
         </Card>
       )}
 
-      {/* Recent discussions */}
       <div>
         <h2 className="mb-4 font-display text-lg font-bold">Recent Discussions</h2>
         {discussions.length === 0 ? (

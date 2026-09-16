@@ -1,6 +1,9 @@
 import type { MetadataRoute } from 'next';
-import { createServerSupabase } from '@/lib/supabase/server';
+import { apiFetch, apiFetchPaginated } from '@/lib/api/client';
 import { absoluteUrl } from '@/lib/seo';
+
+type SlugRow = { slug: string; is_private?: boolean };
+type DiscussionRow = { slug: string; updated_at?: string; last_activity_at?: string };
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes: MetadataRoute.Sitemap = [
@@ -11,17 +14,10 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    const supabase = createServerSupabase();
-
-    const [{ data: categories }, { data: topics }, { data: discussions }] = await Promise.all([
-      supabase.from('categories').select('slug').order('sort_order'),
-      supabase.from('topics').select('slug').eq('is_private', false),
-      supabase
-        .from('discussions')
-        .select('slug, updated_at, last_activity_at')
-        .neq('status', 'deleted')
-        .order('last_activity_at', { ascending: false })
-        .limit(2000),
+    const [categories, topics, discussionsResult] = await Promise.all([
+      apiFetch<SlugRow[]>('/categories', { token: null }),
+      apiFetch<SlugRow[]>('/topics', { token: null }),
+      apiFetchPaginated<DiscussionRow>('/discussions?per_page=100', { token: null }),
     ]);
 
     const categoryRoutes: MetadataRoute.Sitemap = (categories ?? []).map((c) => ({
@@ -30,13 +26,15 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
       priority: 0.7,
     }));
 
-    const topicRoutes: MetadataRoute.Sitemap = (topics ?? []).map((t) => ({
-      url: absoluteUrl(`/topics/${t.slug}`),
-      changeFrequency: 'daily',
-      priority: 0.75,
-    }));
+    const topicRoutes: MetadataRoute.Sitemap = (topics ?? [])
+      .filter((t) => !t.is_private)
+      .map((t) => ({
+        url: absoluteUrl(`/topics/${t.slug}`),
+        changeFrequency: 'daily',
+        priority: 0.75,
+      }));
 
-    const discussionRoutes: MetadataRoute.Sitemap = (discussions ?? []).map((d) => ({
+    const discussionRoutes: MetadataRoute.Sitemap = (discussionsResult.data ?? []).map((d) => ({
       url: absoluteUrl(`/d/${d.slug}`),
       lastModified: d.last_activity_at || d.updated_at || undefined,
       changeFrequency: 'daily',

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { listCategories, listDiscussions, listTopics } from '@/lib/api/forum';
 import type { Category, DiscussionWithRelations } from '@/lib/types';
 import { DiscussionCard, DiscussionCardSkeleton } from '@/components/discussion-card';
 import { EmptyState, ErrorState } from '@/components/states';
@@ -18,8 +18,8 @@ interface CategoryWithCounts extends Category {
 }
 
 export default function HomePage() {
-  const { user } = useAuth();
-  const canCreateCategory = !!user;
+  const { user, roles } = useAuth();
+  const canCreateCategory = roles.includes('admin') || roles.includes('moderator');
   const [categories, setCategories] = useState<CategoryWithCounts[]>([]);
   const [discussions, setDiscussions] = useState<DiscussionWithRelations[]>([]);
   const [loadingCats, setLoadingCats] = useState(true);
@@ -30,53 +30,30 @@ export default function HomePage() {
   useEffect(() => {
     async function loadCategories() {
       setLoadingCats(true);
-      const { data: cats, error: catError } = await supabase
-        .from('categories')
-        .select('*')
-        .order('sort_order');
+      try {
+        const cats = await listCategories();
+        setCategories(cats.map((cat) => ({ ...cat, topic_count: 0, discussion_count: 0 })));
+        setLoadingCats(false);
 
-      if (catError) {
+        if (cats.length === 0) return;
+
+        const topics = await listTopics();
+        const topicCountByCat = new Map<string, number>();
+        for (const t of topics) {
+          topicCountByCat.set(t.category_id, (topicCountByCat.get(t.category_id) ?? 0) + 1);
+        }
+
+        setCategories(
+          cats.map((cat) => ({
+            ...cat,
+            topic_count: topicCountByCat.get(cat.id) ?? 0,
+            discussion_count: 0,
+          }))
+        );
+      } catch {
         setError('Failed to load categories.');
         setLoadingCats(false);
-        return;
       }
-
-      const list = cats ?? [];
-      setCategories(list.map((cat) => ({ ...cat, topic_count: 0, discussion_count: 0 })));
-      setLoadingCats(false);
-
-      if (list.length === 0) return;
-
-      const enriched = await Promise.all(
-        list.map(async (cat) => {
-          const [{ count: topicCount }, { data: topics }] = await Promise.all([
-            supabase
-              .from('topics')
-              .select('*', { count: 'exact', head: true })
-              .eq('category_id', cat.id),
-            supabase.from('topics').select('id').eq('category_id', cat.id),
-          ]);
-
-          const topicIds = (topics ?? []).map((t) => t.id);
-          let discussionCount = 0;
-          if (topicIds.length > 0) {
-            const { count } = await supabase
-              .from('discussions')
-              .select('*', { count: 'exact', head: true })
-              .in('topic_id', topicIds)
-              .neq('status', 'deleted');
-            discussionCount = count ?? 0;
-          }
-
-          return {
-            ...cat,
-            topic_count: topicCount ?? 0,
-            discussion_count: discussionCount,
-          };
-        })
-      );
-
-      setCategories(enriched);
     }
 
     loadCategories();
@@ -85,30 +62,18 @@ export default function HomePage() {
   useEffect(() => {
     async function loadDiscussions() {
       setLoadingDisc(true);
-      const orderCol = tab === 'trending' ? 'like_count' : 'last_activity_at';
-      const { data: disc, error: discError } = await supabase
-        .from('discussions')
-        .select(`
-          *,
-          profiles:profiles!discussions_user_id_fkey(id, username, display_name, avatar_url),
-          topics:topics!discussions_topic_id_fkey(id, name, slug),
-          tags:discussion_tags(tag:tags(id, name, slug))
-        `)
-        .neq('status', 'deleted')
-        .order(orderCol, { ascending: false })
-        .limit(10);
-
-      if (discError) {
+      try {
+        const { data } = await listDiscussions({
+          sort: tab === 'trending' ? 'popular' : 'recent',
+          per_page: 10,
+        });
+        setDiscussions(data);
+      } catch {
         setError('Failed to load discussions.');
         setDiscussions([]);
-      } else {
-        const formatted = (disc ?? []).map((d) => ({
-          ...d,
-          tags: d.tags?.map((dt: { tag: unknown[] }) => dt.tag).flat() ?? [],
-        })) as DiscussionWithRelations[];
-        setDiscussions(formatted);
+      } finally {
+        setLoadingDisc(false);
       }
-      setLoadingDisc(false);
     }
 
     loadDiscussions();

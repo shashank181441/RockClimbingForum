@@ -1,12 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { useCallback, useState } from 'react';
+import { uploadImage } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
 import {
   addPendingUpload,
   clearPendingUploads,
-  getPendingUploads,
   removePendingUpload,
   type PendingUpload,
 } from '@/lib/pending-uploads';
@@ -26,11 +26,6 @@ interface EarlyImageUploadProps {
   label?: string;
 }
 
-async function deleteStorageFile(storagePath: string) {
-  await supabase.storage.from('forum-images').remove([storagePath]);
-  removePendingUpload(storagePath);
-}
-
 export function EarlyImageUpload({
   value,
   onChange,
@@ -39,20 +34,6 @@ export function EarlyImageUpload({
 }: EarlyImageUploadProps) {
   const { user } = useAuth();
   const [uploading, setUploading] = useState(false);
-
-  // Clean abandoned uploads from previous sessions (not in current form state)
-  useEffect(() => {
-    if (!user) return;
-    const pending = getPendingUploads();
-    const activePaths = new Set(value.map((img) => img.storage_path));
-    const orphans = pending.filter((u) => !activePaths.has(u.storage_path));
-    if (orphans.length === 0) return;
-
-    (async () => {
-      await Promise.all(orphans.map((u) => deleteStorageFile(u.storage_path)));
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.id]);
 
   const handleSelect = useCallback(
     async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -74,30 +55,24 @@ export function EarlyImageUpload({
 
       const uploaded: UploadedImage[] = [];
       for (const file of files) {
-        const ext = file.name.split('.').pop() || 'jpg';
-        const filePath = `${user.id}/pending/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('forum-images')
-          .upload(filePath, file);
-
-        if (uploadError) {
-          toast.error(`Failed to upload ${file.name}`);
-          continue;
+        try {
+          const result = await uploadImage(file);
+          const pending: PendingUpload = {
+            storage_path: result.path,
+            file_url: result.url,
+            file_type: file.type || null,
+          };
+          addPendingUpload(pending);
+          uploaded.push({
+            ...pending,
+            localId: result.path,
+            previewUrl: URL.createObjectURL(file),
+          });
+        } catch (err) {
+          toast.error(
+            err instanceof ApiError ? err.message : `Failed to upload ${file.name}`
+          );
         }
-
-        const { data: urlData } = supabase.storage.from('forum-images').getPublicUrl(filePath);
-        const pending: PendingUpload = {
-          storage_path: filePath,
-          file_url: urlData.publicUrl,
-          file_type: file.type || null,
-        };
-        addPendingUpload(pending);
-        uploaded.push({
-          ...pending,
-          localId: filePath,
-          previewUrl: URL.createObjectURL(file),
-        });
       }
 
       if (uploaded.length > 0) {
@@ -108,10 +83,10 @@ export function EarlyImageUpload({
     [user, value, maxImages, onChange]
   );
 
-  const removeImage = async (image: UploadedImage) => {
+  const removeImage = (image: UploadedImage) => {
     onChange(value.filter((img) => img.localId !== image.localId));
     if (image.previewUrl) URL.revokeObjectURL(image.previewUrl);
-    await deleteStorageFile(image.storage_path);
+    removePendingUpload(image.storage_path);
   };
 
   return (
@@ -162,37 +137,18 @@ export function EarlyImageUpload({
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Images upload as soon as you pick them. Submitting the post only links them — no long wait at the end.
+        Images upload as soon as you pick them. Submitting the post embeds their URLs in the body.
       </p>
     </div>
   );
 }
 
-/** After discussion insert: create attachment rows from already-uploaded files */
-export async function attachUploadedImages(
-  images: UploadedImage[],
-  discussionId: string,
-  uploaderId: string
-) {
+/** Images are already uploaded; clear local pending tracking after create. */
+export async function attachUploadedImages(images: UploadedImage[]) {
   if (images.length === 0) return;
-
-  const rows = images.map((img) => ({
-    uploader_id: uploaderId,
-    storage_path: img.storage_path,
-    file_url: img.file_url,
-    thumbnail_url: img.file_url,
-    file_type: img.file_type,
-    attachable_type: 'discussion' as const,
-    attachable_id: discussionId,
-  }));
-
-  const { error } = await supabase.from('attachments').insert(rows);
-  if (error) throw error;
-
   clearPendingUploads(images.map((img) => img.storage_path));
 }
 
 export async function discardUploadedImages(images: UploadedImage[]) {
-  await Promise.all(images.map((img) => deleteStorageFile(img.storage_path)));
   clearPendingUploads(images.map((img) => img.storage_path));
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase/client';
+import { listBookmarks } from '@/lib/api/forum';
 import { useAuth } from '@/lib/auth-context';
 import type { DiscussionWithRelations } from '@/lib/types';
 import { DiscussionCard, DiscussionCardSkeleton } from '@/components/discussion-card';
@@ -25,50 +25,15 @@ export default function BookmarksPage() {
       return;
     }
     setLoading(true);
-
-    // Get bookmarked discussion IDs
-    const { data: bookmarks, error: bmError } = await supabase
-      .from('bookmarks')
-      .select('discussion_id')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (bmError) {
+    try {
+      const data = await listBookmarks();
+      setDiscussions(data);
+      setError(null);
+    } catch {
       setError('Failed to load bookmarks.');
+    } finally {
       setLoading(false);
-      return;
     }
-
-    if (!bookmarks || bookmarks.length === 0) {
-      setDiscussions([]);
-      setLoading(false);
-      return;
-    }
-
-    const discIds = bookmarks.map((b) => b.discussion_id);
-
-    const { data: discs, error: discError } = await supabase
-      .from('discussions')
-      .select(`
-        *,
-        profiles:profiles!discussions_user_id_fkey(id, username, display_name, avatar_url),
-        topics:topics!discussions_topic_id_fkey(id, name, slug),
-        tags:discussion_tags(tag:tags(id, name, slug))
-      `)
-      .in('id', discIds)
-      .neq('status', 'deleted')
-      .order('last_activity_at', { ascending: false });
-
-    if (discError) {
-      setError('Failed to load bookmarked discussions.');
-    } else {
-      const formatted = (discs ?? []).map((d) => ({
-        ...d,
-        tags: d.tags?.map((dt: { tag: unknown[] }) => dt.tag).flat() ?? [],
-      })) as DiscussionWithRelations[];
-      setDiscussions(formatted);
-    }
-    setLoading(false);
   }, [user?.id]);
 
   useEffect(() => {

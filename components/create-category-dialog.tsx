@@ -1,7 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { supabase } from '@/lib/supabase/client';
+import { createCategory } from '@/lib/api/forum';
+import { ApiError } from '@/lib/api/client';
 import { slugify } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,32 +43,27 @@ export function CreateCategoryDialog({ onCreated, trigger }: CreateCategoryDialo
     const slugBase = slugify(name);
     const slug = slugBase || `category-${Date.now().toString(36)}`;
 
-    const { data, error } = await supabase
-      .from('categories')
-      .insert({
+    try {
+      const data = await createCategory({
         name: name.trim(),
         slug,
-        description: description.trim() || null,
-      })
-      .select('*')
-      .single();
-
-    setSubmitting(false);
-
-    if (error || !data) {
+        description: description.trim() || undefined,
+      });
+      toast.success('Category created.');
+      setName('');
+      setDescription('');
+      setOpen(false);
+      onCreated?.(data);
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Failed to create category.';
       toast.error(
-        error?.message?.includes('duplicate')
+        message.toLowerCase().includes('duplicate') || message.toLowerCase().includes('unique')
           ? 'A category with that name already exists.'
-          : error?.message || 'Failed to create category. If this persists, run the latest Supabase migration.'
+          : message
       );
-      return;
+    } finally {
+      setSubmitting(false);
     }
-
-    toast.success('Category created.');
-    setName('');
-    setDescription('');
-    setOpen(false);
-    onCreated?.(data as Category);
   }
 
   return (
