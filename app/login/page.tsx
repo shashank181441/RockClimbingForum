@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { GoogleSignInButton } from '@/components/google-signin-button';
 import { Mountain, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -94,6 +95,11 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting ? 'Signing in...' : 'Sign In'}
             </Button>
+            <div className="relative w-full py-1 text-center text-xs text-muted-foreground">
+              <span className="relative bg-card px-2">or</span>
+              <div className="absolute inset-x-0 top-1/2 -z-10 border-t" />
+            </div>
+            <GoogleSignInButton />
             <p className="text-sm text-muted-foreground">
               Don&apos;t have an account?{' '}
               <Link href="/signup" className="font-medium text-primary hover:underline">
