@@ -78,7 +78,7 @@ export default function TopicPage() {
         </div>
         {user && !topic?.is_locked && (
           <Button asChild>
-            <Link href={`/new-discussion?topic=${topic?.slug}`}>
+            <Link href={`/new-discussion?category=${topic?.categories?.slug}`}>
               <Plus className="mr-1 h-4 w-4" /> New Discussion
             </Link>
           </Button>
@@ -95,7 +95,7 @@ export default function TopicPage() {
               action={
                 user && !topic?.is_locked ? (
                   <Button asChild size="sm">
-                    <Link href={`/new-discussion?topic=${topic?.slug}`}>Start a Discussion</Link>
+                    <Link href={`/new-discussion?category=${topic?.categories?.slug}`}>Start a Discussion</Link>
                   </Button>
                 ) : undefined
               }

@@ -6,11 +6,10 @@ import {
   createDiscussion,
   listCategories,
   listTags,
-  listTopics,
 } from '@/lib/api/forum';
 import { ApiError } from '@/lib/api/client';
 import { useAuth } from '@/lib/auth-context';
-import type { Topic, Tag, Category } from '@/lib/types';
+import type { Tag, Category } from '@/lib/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,7 +18,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Loader2, ArrowLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { CreateTopicDialog } from '@/components/create-topic-dialog';
 import { CreateCategoryDialog } from '@/components/create-category-dialog';
 import {
   EarlyImageUpload,
@@ -37,8 +35,7 @@ export default function NewDiscussionPage() {
   const canManageTaxonomy = roles.includes('admin') || roles.includes('moderator');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [selectedTopicId, setSelectedTopicId] = useState('');
-  const [topics, setTopics] = useState<Topic[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const [categories, setCategories] = useState<Category[]>([]);
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -56,19 +53,14 @@ export default function NewDiscussionPage() {
     async function loadData() {
       setLoadingData(true);
       try {
-        const [tops, tags, cats] = await Promise.all([
-          listTopics(),
-          listTags(),
-          listCategories(),
-        ]);
-        setTopics(tops);
+        const [tags, cats] = await Promise.all([listTags(), listCategories()]);
         setAllTags(tags);
         setCategories(cats);
 
-        const topicSlug = searchParams.get('topic');
-        if (topicSlug) {
-          const matched = tops.find((t) => t.slug === topicSlug);
-          if (matched) setSelectedTopicId(matched.id);
+        const categorySlug = searchParams.get('category');
+        if (categorySlug) {
+          const matched = cats.find((c) => c.slug === categorySlug);
+          if (matched) setSelectedCategoryId(matched.id);
         }
       } catch {
         toast.error('Failed to load form data.');
@@ -96,8 +88,8 @@ export default function NewDiscussionPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!user) return;
-    if (!title.trim() || !selectedTopicId) {
-      toast.error('Please provide a title and select a topic.');
+    if (!title.trim() || !selectedCategoryId) {
+      toast.error('Please provide a title and select a category.');
       return;
     }
 
@@ -108,7 +100,7 @@ export default function NewDiscussionPage() {
 
     try {
       const disc = await createDiscussion({
-        topic_id: selectedTopicId,
+        category_id: selectedCategoryId,
         title: title.trim(),
         body: finalBody,
         tags: selectedTags.length > 0 ? selectedTags : undefined,
@@ -150,32 +142,19 @@ export default function NewDiscussionPage() {
 
       <Card>
         <CardContent className="p-6">
-          {topics.length === 0 ? (
+          {categories.length === 0 ? (
             <EmptyState
               icon={FolderOpen}
-              title="No topics yet"
-              description={
-                categories.length === 0
-                  ? 'Create a category first, then a topic, before starting a discussion.'
-                  : 'Create a topic to start posting discussions.'
-              }
+              title="No categories yet"
+              description="Create a category before starting a discussion."
               action={
                 canManageTaxonomy ? (
-                <div className="flex flex-wrap justify-center gap-2">
-                  {categories.length > 0 ? (
-                    <CreateTopicDialog
-                      categories={categories}
-                      onCreated={(topic) => {
-                        setTopics((prev) => [...prev, topic].sort((a, b) => a.name.localeCompare(b.name)));
-                        setSelectedTopicId(topic.id);
-                      }}
-                    />
-                  ) : (
-                    <CreateCategoryDialog
-                      onCreated={(cat) => setCategories((prev) => [...prev, cat])}
-                    />
-                  )}
-                </div>
+                  <CreateCategoryDialog
+                    onCreated={(cat) => {
+                      setCategories((prev) => [...prev, cat]);
+                      setSelectedCategoryId(cat.id);
+                    }}
+                  />
                 ) : undefined
               }
             />
@@ -185,33 +164,32 @@ export default function NewDiscussionPage() {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor="topic">Topic *</Label>
+                  <Label htmlFor="category">Category *</Label>
                   {canManageTaxonomy && (
-                  <CreateTopicDialog
-                    categories={categories}
-                    onCreated={(topic) => {
-                      setTopics((prev) => [...prev, topic].sort((a, b) => a.name.localeCompare(b.name)));
-                      setSelectedTopicId(topic.id);
+                  <CreateCategoryDialog
+                    onCreated={(cat) => {
+                      setCategories((prev) => [...prev, cat]);
+                      setSelectedCategoryId(cat.id);
                     }}
                     trigger={
                       <Button type="button" variant="link" size="sm" className="h-auto p-0 text-xs">
-                        + Create topic
+                        + Create category
                       </Button>
                     }
                   />
                   )}
                 </div>
                 <select
-                  id="topic"
-                  value={selectedTopicId}
-                  onChange={(e) => setSelectedTopicId(e.target.value)}
+                  id="category"
+                  value={selectedCategoryId}
+                  onChange={(e) => setSelectedCategoryId(e.target.value)}
                   required
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                 >
-                  <option value="">Select a topic...</option>
-                  {topics.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
+                  <option value="">Select a category...</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
                     </option>
                   ))}
                 </select>

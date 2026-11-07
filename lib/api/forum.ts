@@ -189,7 +189,7 @@ export async function getDiscussion(slug: string): Promise<DiscussionWithRelatio
 }
 
 export async function createDiscussion(input: {
-  topic_id: string;
+  category_id: string;
   title: string;
   body: string;
   tags?: string[];
